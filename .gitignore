@@ -130,3 +130,6 @@ dmypy.json
 
 # protobuf compiled files
 *pb2.py
+
+# Mac FS cache
+**/.DS_Store
