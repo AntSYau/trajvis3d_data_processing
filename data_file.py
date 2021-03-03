@@ -34,7 +34,7 @@ def gcj_to_wgs(lon, lat):
 
 
 def operate_data(gid, uid, data):
-    print("processing gid {} uid {}".format(gid, uid))
+    print("processing gid {:6d} uid {}".format(gid, uid))
     data = data.loc[(data["lat"] != data["lat"].shift()) |
                     (data["lng"] != data["lng"].shift())] \
         .reset_index(drop=True)
@@ -59,6 +59,7 @@ class DataFile:
 
     def read_file(self):
         print("read file {}".format(self.proto.file))
+        ts = time.time()
         header = None if self.proto.has_header else 0
         self.data = pd.read_csv(
             self.proto.file,
@@ -67,13 +68,16 @@ class DataFile:
             error_bad_lines=False,
             header=None
         )
+        print("[{:.2f}] rename columns".format(time.time()-ts))
         self.data = self.data.rename(columns={
             self.proto.row_uid: "uid",
             self.proto.row_time: "time",
             self.proto.row_lat: "lat",
             self.proto.row_lng: "lng"
         })[["uid", "time", "lat", "lng"]]
+        print("[{:.2f}] drop na".format(time.time()-ts))
         self.data = self.data.dropna().reset_index(drop=True)
+        print("[{:.2f}] read file complete".format(time.time()-ts))
         # self.data = self.data \
         #     .sort_values(by=["uid"], axis=0) \
         #     .loc[(self.data["uid"] == self.data["uid"].shift()) & (
@@ -87,19 +91,41 @@ class DataFile:
         self.grouped_data = []
         self.groups = []
         processes = []
+        Q = mp.Queue()
         gid = 0
         tmp = self.data.groupby("uid")
+        print(len(tmp))
         for uid, data in tmp:
-            x = mp.Process(target=operate_data, args=(gid, uid, data,))
-            gid += 1
-            processes.append(x)
-        [x.start() for x in processes]
-        [x.join() for x in processes]
-        for x in processes:
-            uid, data = x
-            self.groups.append(uid)
-            self.grouped_data.append(data)
+            u, d = operate_data(gid, uid, data)
+            gid+=1
+            self.groups.append(u)
+            self.grouped_data.append(d)
+        # for uid, data in tmp:
+        #     x = mp.Process(target=operate_data, args=(gid, uid, data,))
+        #     gid += 1
+        #     processes.append(x)
+        #     if gid % 100 == 0:
+        #         [x.start() for x in processes]
+        #         [x.join() for x in processes]
+        #         for x in processes:
+        #             uid, data = x
+        #             self.groups.append(uid)
+        #             self.grouped_data.append(data)
+        #         processes = []
+        # [x.start() for x in processes]
+        # [x.join() for x in processes]
+        # for x in processes:
+        #     uid, data = x
+        #     self.groups.append(uid)
+        #     self.grouped_data.append(data)
         print("group data end. time spent: {:.2f}".format(time.time() - ts))
 
     def gcj_to_wgs(self):
+        print("converting coordinate")
+        ts=time.time()
         self.data["lng"], self.data["lat"] = zip(*self.data.apply(lambda x: gcj_to_wgs(x["lng"], x["lat"]), axis=1))
+        print("[{:.2f}] done".format(time.time()-ts))
+
+    def store_data_as_file(self):
+        print("saving file to {}".format(self.proto.file+"_converted"))
+        self.data.to_csv(self.proto.file+"_converted")
