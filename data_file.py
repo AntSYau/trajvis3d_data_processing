@@ -39,7 +39,7 @@ def operate_data(gid, uid, data):
         print("processing gid {:6d} uid {}".format(gid, uid))
     data = data.sort_values(by="time") \
         .loc[(data["lat"] != data["lat"].shift(-1)) |
-            (data["lng"] != data["lng"].shift(-1))] \
+             (data["lng"] != data["lng"].shift(-1))] \
         .reset_index(drop=True)
     return uid, data
 
@@ -51,7 +51,7 @@ class DataFile:
         self.data = None
         self.grouped_data = None
         self.groups = None
-        self.instruction_sets=[]
+        self.instruction_sets = []
         self.read_file()
 
     def update(self, message):
@@ -74,19 +74,19 @@ class DataFile:
         )
         self.data = self.data.head(100000)
         print(self.data)
-        print("[{:.2f}] rename columns".format(time.time()-ts))
+        print("[{:.2f}] rename columns".format(time.time() - ts))
         self.data = self.data.rename(columns={
             self.proto.row_uid: "uid",
             self.proto.row_time: "time",
             self.proto.row_lat: "lat",
             self.proto.row_lng: "lng"
         })[["uid", "time", "lat", "lng"]]
-        self.data["time"]=self.data["time"].astype("int")
+        self.data["time"] = self.data["time"].astype("int")
         # self.data["lat"]=self.data["lat"].astype("float")
         # self.data["lng"]=self.data["lng"].astype("float")
-        print("[{:.2f}] drop na".format(time.time()-ts))
+        print("[{:.2f}] drop na".format(time.time() - ts))
         self.data = self.data.dropna().reset_index(drop=True)
-        print("[{:.2f}] read file complete".format(time.time()-ts))
+        print("[{:.2f}] read file complete".format(time.time() - ts))
         # self.data = self.data \
         #     .sort_values(by=["uid"], axis=0) \
         #     .loc[(self.data["uid"] == self.data["uid"].shift()) & (
@@ -106,8 +106,8 @@ class DataFile:
         print(len(tmp))
         for uid, data in tmp:
             u, d = operate_data(gid, uid, data)
-            gid+=1
-            if len(d)>0:
+            gid += 1
+            if len(d) > 0:
                 self.groups.append(u)
                 self.grouped_data.append(d)
             else:
@@ -131,52 +131,50 @@ class DataFile:
         #     self.groups.append(uid)
         #     self.grouped_data.append(data)
         print("group data end. time spent: {:.2f}".format(time.time() - ts))
-    
+
     def generate_flow(self):
         instructions = pd.DataFrame()
 
         for d in self.grouped_data:
-            d["lat_end"]=d["lat"].shift(-1)
-            d["time_end"]=d["time"].shift(-1)
-            d["lng_end"]=d["lng"].shift(-1)
+            d["lat_end"] = d["lat"].shift(-1)
+            d["time_end"] = d["time"].shift(-1)
+            d["lng_end"] = d["lng"].shift(-1)
             d.dropna(inplace=True)
-            d["time_end"]=d["time_end"].astype("int")
-            if d.shape[0]==0: continue
-            d["end"]=0
-            d.iloc[-1, 7]=1
-            instructions=instructions.append(d)
-        
-        instruction_groups=instructions.reset_index(drop=True).groupby("time")
-        self.instruction_sets=[]
+            d["time_end"] = d["time_end"].astype("int")
+            if d.shape[0] == 0: continue
+            d["end"] = 0
+            d.iloc[-1, 7] = 1
+            instructions = instructions.append(d)
 
-        gid=0
+        instruction_groups = instructions.reset_index(drop=True).groupby("time")
+        self.instruction_sets = []
+
+        gid = 0
         for ts, tdata in instruction_groups:
-            gid+=1
-            t_inst_set=dcpb.InstructionSet()
-            t_inst_set.timestamp=ts
+            gid += 1
+            t_inst_set = dcpb.InstructionSet()
+            t_inst_set.timestamp = ts
             for _, trow in tdata.iterrows():
-                inst=t_inst_set.instructions.add()
-                inst.uid=trow["uid"]
-                inst.start_ts=trow["time"]
-                inst.start_lat=trow["lat"]
-                inst.start_lng=trow["lng"]
-                inst.is_end_instruction=trow["end"]
-                inst.end_ts=trow["time_end"]
-                inst.end_lat=trow["lat_end"]
-                inst.end_lng=trow["lng_end"]
+                inst = t_inst_set.instructions.add()
+                inst.uid = trow["uid"]
+                inst.start_ts = trow["time"]
+                inst.start_lat = trow["lat"]
+                inst.start_lng = trow["lng"]
+                inst.is_end_instruction = trow["end"]
+                inst.end_ts = trow["time_end"]
+                inst.end_lat = trow["lat_end"]
+                inst.end_lng = trow["lng_end"]
             self.instruction_sets.append(t_inst_set)
             if gid % 1000 == 0:
                 print("gid #{}:".format(gid))
                 print(t_inst_set)
-        
-
 
     def gcj_to_wgs(self):
         print("converting coordinate")
-        ts=time.time()
+        ts = time.time()
         self.data["lng"], self.data["lat"] = zip(*self.data.apply(lambda x: gcj_to_wgs(x["lng"], x["lat"]), axis=1))
-        print("[{:.2f}] done".format(time.time()-ts))
+        print("[{:.2f}] done".format(time.time() - ts))
 
     def store_data_as_file(self):
-        print("saving file to {}".format(self.proto.file+"_converted"))
-        self.data.to_csv(self.proto.file+"_converted")
+        print("saving file to {}".format(self.proto.file + "_converted"))
+        self.data.to_csv(self.proto.file + "_converted")
