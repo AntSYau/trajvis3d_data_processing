@@ -1,9 +1,9 @@
 import protobuf.data_file_pb2 as dfpb
 import protobuf.data_comm_pb2 as dcpb
-import multiprocessing as mp
 import pandas as pd
 import math
 import time
+import random
 
 
 def gcj_to_wgs(lon, lat):
@@ -51,8 +51,15 @@ class DataFile:
         self.data = None
         self.grouped_data = None
         self.groups = None
-        self.instruction_sets = []
+        self.instructions = {}
         self.read_file()
+        if self.proto.coord_sys == dfpb.CoordinateSystem.GCJ02:
+            self.gcj_to_wgs()
+
+    def clean_intermediates(self):
+        self.data = None
+        self.grouped_data = None
+        self.groups = None
 
     def update(self, message):
         new_proto = dfpb.DataFile()
@@ -72,8 +79,7 @@ class DataFile:
             error_bad_lines=False,
             header=None
         )
-        self.data = self.data.head(100000)
-        print(self.data)
+        print(self.data.tail())
         print("[{:.2f}] rename columns".format(time.time() - ts))
         self.data = self.data.rename(columns={
             self.proto.row_uid: "uid",
@@ -81,26 +87,18 @@ class DataFile:
             self.proto.row_lat: "lat",
             self.proto.row_lng: "lng"
         })[["uid", "time", "lat", "lng"]]
-        self.data["time"] = self.data["time"].astype("int")
-        # self.data["lat"]=self.data["lat"].astype("float")
-        # self.data["lng"]=self.data["lng"].astype("float")
         print("[{:.2f}] drop na".format(time.time() - ts))
         self.data = self.data.dropna().reset_index(drop=True)
+        self.data["time"] = self.data["time"].astype("int")
+        self.data["lat"] = self.data["lat"].astype("float")
+        self.data["lng"] = self.data["lng"].astype("float")
         print("[{:.2f}] read file complete".format(time.time() - ts))
-        # self.data = self.data \
-        #     .sort_values(by=["uid"], axis=0) \
-        #     .loc[(self.data["uid"] == self.data["uid"].shift()) & (
-        #         (self.data["lat"] != self.data["lat"].shift()) |
-        #         (self.data["lng"] != self.data["lng"].shift()))] \
-        #     .reset_index(drop=True)
 
     def group_data(self):
         print("group data")
         ts = time.time()
         self.grouped_data = []
         self.groups = []
-        processes = []
-        Q = mp.Queue()
         gid = 0
         tmp = self.data.groupby("uid")
         print(len(tmp))
@@ -112,30 +110,19 @@ class DataFile:
                 self.grouped_data.append(d)
             else:
                 print("group {:6d} is empty!".format(u))
-        # for uid, data in tmp:
-        #     x = mp.Process(target=operate_data, args=(gid, uid, data,))
-        #     gid += 1
-        #     processes.append(x)
-        #     if gid % 100 == 0:
-        #         [x.start() for x in processes]
-        #         [x.join() for x in processes]
-        #         for x in processes:
-        #             uid, data = x
-        #             self.groups.append(uid)
-        #             self.grouped_data.append(data)
-        #         processes = []
-        # [x.start() for x in processes]
-        # [x.join() for x in processes]
-        # for x in processes:
-        #     uid, data = x
-        #     self.groups.append(uid)
-        #     self.grouped_data.append(data)
         print("group data end. time spent: {:.2f}".format(time.time() - ts))
 
     def generate_flow(self):
-        instructions = pd.DataFrame()
-
-        for d in self.grouped_data:
+        instructions = []
+        print("generate flow")
+        start_ts = time.time()
+        # frac = random.sample(self.grouped_data, 1000)
+        # print(len(frac))
+        # for i, d in enumerate(frac):
+        print(len(self.grouped_data))
+        for i, d in enumerate(self.grouped_data):
+            if i % 1000 == 0:
+                print("[{:.2f}] process group {}".format(time.time() - start_ts, i))
             d["lat_end"] = d["lat"].shift(-1)
             d["time_end"] = d["time"].shift(-1)
             d["lng_end"] = d["lng"].shift(-1)
@@ -144,18 +131,22 @@ class DataFile:
             if d.shape[0] == 0: continue
             d["end"] = 0
             d.iloc[-1, 7] = 1
-            instructions = instructions.append(d)
-
-        instruction_groups = instructions.reset_index(drop=True).groupby("time")
-        self.instruction_sets = []
+            instructions.append(d)
+        print("[{:.2f}] concat instructions".format(time.time() - start_ts))
+        instruction_groups = pd.concat(instructions).reset_index(drop=True).groupby("time")
+        print("[{:.2f}] start generate instruction".format(time.time() - start_ts))
+        self.instructions = {}
+        _tmp_i = []
 
         gid = 0
+        print(len(instruction_groups))
+
         for ts, tdata in instruction_groups:
             gid += 1
-            t_inst_set = dcpb.InstructionSet()
-            t_inst_set.timestamp = ts
+            self.instructions[ts] = []
+            _tmp = []
             for _, trow in tdata.iterrows():
-                inst = t_inst_set.instructions.add()
+                inst = dcpb.Instruction()
                 inst.uid = trow["uid"]
                 inst.start_ts = trow["time"]
                 inst.start_lat = trow["lat"]
@@ -164,10 +155,12 @@ class DataFile:
                 inst.end_ts = trow["time_end"]
                 inst.end_lat = trow["lat_end"]
                 inst.end_lng = trow["lng_end"]
-            self.instruction_sets.append(t_inst_set)
+                _tmp.append(inst)
+            _tmp_i.append((ts, _tmp))
             if gid % 1000 == 0:
-                print("gid #{}:".format(gid))
-                print(t_inst_set)
+                print("[{:.2f}] gid #{}: timestamp {}".format(time.time() - start_ts, gid, ts))
+        self.instructions = {k: v for k, v in _tmp_i}
+        print("[{:.2f}] generate flow completed".format(time.time() - start_ts))
 
     def gcj_to_wgs(self):
         print("converting coordinate")
@@ -177,4 +170,4 @@ class DataFile:
 
     def store_data_as_file(self):
         print("saving file to {}".format(self.proto.file + "_converted"))
-        self.data.to_csv(self.proto.file + "_converted")
+        self.data.to_csv(self.proto.file + "_converted", header=False, index_label=False)
