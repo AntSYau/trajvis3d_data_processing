@@ -9,6 +9,7 @@ import sys
 
 test = pbdf.DataFile()
 
+
 class TrajVis3DServicer(gdc.TrajVis3DServicer):
     dataFile = None
 
@@ -25,12 +26,17 @@ class TrajVis3DServicer(gdc.TrajVis3DServicer):
 
     def GetInstructionsBetween(self, request: pbdc.TimePeriod, context):
         print("request", request)
+        insl = []
         for ts in range(request.start_ts, request.end_ts):
             if ts in self.instructions:
                 _tmp = self.instructions[ts]
                 print("{} serve {}".format(ts, len(_tmp)))
-                for _inst in _tmp:
-                    yield _inst
+                insl += _tmp
+        print("create instruction set")
+        ret = pbdc.InstructionSet()
+        ret.instructions.extend(insl)
+        print("serve instruction of length {}".format(len(insl)))
+        return ret
 
 
 cached = True
